@@ -6,6 +6,7 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
     TH32CS_SNAPMODULE32,
 };
 
+/// Iterates through the loaded modules of the current application.
 pub struct WinModules {
     snap: HANDLE,
     first: bool,

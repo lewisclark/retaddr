@@ -2,22 +2,27 @@
 
 mod winmodule;
 
-use std::arch::asm;
-
-// Protects a given function by creating a naked asm wrapper function
-// which in turn will call the given function argument.
+/// Protects a given function by creating a wrapper around it.
+///
+/// * `wrapper` - the name of the new function that will wrap the given/protected function
+/// * `ret` - the return type of the protected function
+/// * `callee` - the protected function
+/// * `check_fn` - the callback function that is called to validate the return address. Called with
+/// a single argument, the return address as a usize. Must be `extern "cdecl"`.
 #[macro_export]
 macro_rules! wrap {
-    ( $wrapper:ident, $ret:ty, $callee:ident ) => {
+    ( $wrapper:ident, $ret:ty, $callee:ident, $check_fn:ident ) => {
         #[naked]
         unsafe extern "cdecl" fn $wrapper() -> $ret {
-            asm!(
+            std::arch::asm!(
+                "push [esp]",
                 "call {c}",
+                "add esp, 4",
                 "pushad",
                 "call {f}",
                 "popad",
                 "ret",
-                c = sym check_retaddr,
+                c = sym $check_fn,
                 f = sym $callee,
                 options(noreturn),
             )
@@ -25,25 +30,17 @@ macro_rules! wrap {
     };
 }
 
-#[allow(dead_code)]
-#[naked]
-unsafe extern "cdecl" fn check_retaddr() {
-    asm!(
-        "push [esp]",
-        "call {f}",
-        "ret 4",
-        f = sym check_retaddr_internal,
-        options(noreturn)
-    );
-}
-
-unsafe extern "cdecl" fn check_retaddr_internal(retaddr: usize) {
+/// A check function which can be used with the wrap! macro.
+/// Determines if the return address is within the first module of the application and
+/// panics if it isn't.
+pub extern "cdecl" fn check_module_bounds_and_panic(retaddr: usize) {
     let exe_module = winmodule::WinModules::new().unwrap().next().unwrap();
-    let valid_min = exe_module.modBaseAddr as usize;
-    let valid_max = valid_min + exe_module.modBaseSize as usize;
 
-    if retaddr < valid_min || retaddr > valid_max {
-        panic!()
+    let min = exe_module.modBaseAddr as usize;
+    let max = min + exe_module.modBaseSize as usize;
+
+    if retaddr < min || retaddr > max {
+        panic!("return address out of valid bounds");
     }
 }
 
@@ -51,12 +48,17 @@ unsafe extern "cdecl" fn check_retaddr_internal(retaddr: usize) {
 mod tests {
     use super::*;
 
-    fn protectee() {}
+    fn protectee1() {}
+    fn check_fn1(_retaddr: usize) {}
+    wrap!(protector1, (), protectee1, check_fn1);
 
-    wrap!(protector, (), protectee);
+    fn protectee2() {}
+    fn check_fn2(_retaddr: usize) {}
+    wrap!(protector2, (), protectee2, check_fn2);
 
     #[test]
     fn works() {
-        unsafe { protector() };
+        unsafe { protector1() };
+        unsafe { protector2() };
     }
 }
