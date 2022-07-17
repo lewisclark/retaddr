@@ -14,6 +14,7 @@ macro_rules! wrap {
     ( $wrapper:ident, $ret:ty, $callee:ident, $check_fn:ident ) => {
         #[naked]
         unsafe extern "cdecl" fn $wrapper() -> $ret {
+            #[cfg(target_arch = "x86")]
             std::arch::asm!(
                 "push [esp]",
                 "call {c}",
@@ -25,7 +26,23 @@ macro_rules! wrap {
                 c = sym $check_fn,
                 f = sym $callee,
                 options(noreturn),
-            )
+            );
+
+            #[cfg(target_arch = "x86_64")]
+            std::arch::asm!(
+                "mov rcx, [rsp]",
+                "push rbp",
+                "mov rbp, rsp",
+                "sub rsp, 32",
+                "call {c}",
+                "call {f}",
+                "add rsp, 32",
+                "pop rbp",
+                "ret",
+                c = sym $check_fn,
+                f = sym $callee,
+                options(noreturn),
+            );
         }
     };
 }
@@ -56,9 +73,13 @@ mod tests {
     fn check_fn2(_retaddr: usize) {}
     wrap!(protector2, (), protectee2, check_fn2);
 
+    fn protectee3() {}
+    wrap!(protector3, (), protectee3, check_module_bounds_and_panic);
+
     #[test]
     fn works() {
         unsafe { protector1() };
         unsafe { protector2() };
+        unsafe { protector3() };
     }
 }
